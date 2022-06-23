@@ -108,3 +108,5 @@ def get_random_song(data_path = default_data_dir):
   idx = random.randint(0, len(filenames) - 1)
 
   return midi_to_notes(filenames[idx])
+
+

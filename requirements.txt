@@ -3,5 +3,3 @@ numpy
 pretty_midi
 pytorch-lightning
 torch
-multimodal-transformers
-transformers
