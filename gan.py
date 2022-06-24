@@ -1,6 +1,9 @@
 from collections import OrderedDict
 
 import copy
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,8 +12,9 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from constants import BATCH_SIZE, INSTRUMENT_NAME
+from midi import get_random_song, notes_to_midi
 
-from songs_data import SongsDataModule, generate_sample_song
+from songs_data import SongsDataModule, SongsDataset
 
 train_songs_len = 200
 valid_songs_len = 10
@@ -20,8 +24,8 @@ instrument_note_keys = ['pitch', 'step', 'duration']
 # train_songs = get_maestro_song_notes(train_songs_len)
 # valid_songs = get_maestro_song_notes(valid_songs_len, skip=train_songs_len)
 
-class Generator(nn.Module):
-    def __init__(self, seq_len=24, num_feats=3, hidden_units=256, drop_prob=0.4, ):
+class NextNoteGenerator(nn.Module):
+    def __init__(self, seq_len=24, num_feats=3, num_pitches=128, hidden_units=256, drop_prob=0.4, ):
         super().__init__()
         self.hidden_dim = hidden_units
 
@@ -30,7 +34,9 @@ class Generator(nn.Module):
         self.lstm_cell1 = nn.LSTMCell(input_size=hidden_units, hidden_size=hidden_units)
         self.dropout = nn.Dropout(p=drop_prob)
         self.lstm_cell2 = nn.LSTMCell(input_size=hidden_units, hidden_size=hidden_units)
-        self.fc_layer2 = nn.Linear(in_features=hidden_units, out_features=num_feats)
+        self.fc_layer2 = nn.Linear(in_features=hidden_units, out_features=2)
+        self.fc_pitches = nn.Linear(in_features=hidden_units, out_features=num_pitches)
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x, states):
         '''
@@ -47,12 +53,16 @@ class Generator(nn.Module):
         x1, c1 = self.lstm_cell1(x, state1)
         x = self.dropout(x1)
         x2, c2 = self.lstm_cell2(x, state2)
-        y = self.fc_layer2(x2)
+        step_duration = self.fc_layer2(x2)
+        pitch = self.softmax(self.fc_pitches(x2))
 
         state1 = (x1, c1)
         state2 = (x2, c2)
 
-        return y, (state1, state2)
+        step = step_duration[:, 0]
+        duration = step_duration[:, 1]
+
+        return pitch, step, duration, (state1, state2)
 
     def init_hidden(self, batch_size=BATCH_SIZE):
         ''' Initialize hidden state '''
@@ -109,6 +119,7 @@ class SongsGAN(pl.LightningModule):
         self,
         seq_len = 24,
         num_feats = 3,
+        pitches_num=128,
         lr: float = 0.0002,
         b1: float = 0.5,
         b2: float = 0.999,
@@ -120,7 +131,7 @@ class SongsGAN(pl.LightningModule):
         self.seq_len = seq_len
         self.batch_size = batch_size
 
-        self.generator = Generator(seq_len=seq_len, num_feats=num_feats)
+        self.generator = NextNoteGenerator(seq_len=seq_len)
         self.discriminator = Discriminator(num_feats=num_feats)
 
         self.generator_state = self.generator.init_hidden(batch_size)
@@ -137,14 +148,18 @@ class SongsGAN(pl.LightningModule):
         # reduce song notes to seq_len (it comes seq_len + 1) as an actual song, next note is predicted
         return songs[:, 0:self.seq_len]
 
-    def append_generated_notes_to_real(self, gen_notes, actual_notes, as_tensor = True):
-        created = copy.deepcopy(actual_notes).detach()
-        gen = gen_notes.clone()
-        for i in range(0, len(gen_notes)):
-            created[i] = torch.cat((created[i][1:], gen[i:(i+1)]))
+    def append_generated_notes_to_real(self, pred_pitch, pred_step, pred_duration, actual_notes, as_tensor = True):
+        actual = copy.deepcopy(actual_notes).detach()
+
+        for i in range(0, len(actual_notes)):
+            pitch = pred_pitch[i].argmax()
+            step = pred_step[i]
+            duration = pred_duration[i]
+
+            actual[i] = torch.cat((actual[i][1:], torch.tensor([[pitch, step, duration]], requires_grad=True)))
 
             # created.append([*actual_notes[i].clone().detach().numpy(), gen_notes[i].clone().detach().numpy()])
-        return created
+        return actual
 
     # def backward(
     #     self, loss, optimizer, optimizer_idx, *args, **kwargs
@@ -163,10 +178,10 @@ class SongsGAN(pl.LightningModule):
             x = self.prepare_notes_batch_for_generator(songs)
 
             # generate next song notes
-            gen, gen_state = self.generated_notes = self(x, self.generator_state)
+            pitch, step, duration, gen_state = self(x, self.generator_state)
             self.generator_state = gen_state
 
-            created = self.append_generated_notes_to_real(gen.clone(), x.clone())
+            created = self.append_generated_notes_to_real(pitch.clone(), step.clone(), duration.clone(), x.clone())
 
             # ground truth result (ie: all fake)
             valid = torch.ones(created.size(0))
@@ -178,6 +193,10 @@ class SongsGAN(pl.LightningModule):
             # adversarial loss is binary cross-entropy
             g_loss = self.adversarial_loss(disc_valid, valid)
             self.log('train_generator_loss', g_loss)
+            self.log('duration_max_train', torch.max(duration), on_step=True, on_epoch=True)
+            self.log('duration_min_train', torch.min(duration), on_step=True, on_epoch=True)
+            self.log('step_max_train', torch.max(step), on_step=True, on_epoch=True)
+            self.log('step_min_train', torch.min(step), on_step=True, on_epoch=True)
 
             tqdm_dict = {"g_loss": g_loss}
             output = OrderedDict({"loss": g_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
@@ -199,10 +218,10 @@ class SongsGAN(pl.LightningModule):
             fake = fake.type_as(songs)
 
             x = self.prepare_notes_batch_for_generator(songs)
-            g, g_state = self(x, self.generator_state)
+            pitch, step, duration, g_state = self(x, self.generator_state)
             self.generator_state = g_state
 
-            g_songs = self.append_generated_notes_to_real(g.detach(), x)
+            g_songs = self.append_generated_notes_to_real(pitch, step, duration, x)
 
             d, d_state =  self.discriminator(g_songs, d_state)
             self.discriminator_state = d_state
@@ -232,15 +251,40 @@ class SongsGAN(pl.LightningModule):
 
         self.train_epoch_num += 1
 
+def generate_sample_song(model, song_len=200, seq_len=24, filename='sample_song.midi'):
+  print(f"Generating a song: {filename}")
+  song = get_random_song()
+  song_dataset = SongsDataset([song], seq_len=seq_len)
+
+  state = model.init_hidden(1)  # batch is one
+
+  sample_song_notes = []
+  x_song = song_dataset[0]
+
+  for _ in range(0, song_len):
+    x = torch.tensor([x_song])
+    pitch, step, duration, state = model(x, state)
+
+    pitch_class = pitch[0].argmax().item()
+    step = abs(step[0].item())
+    duration = abs(duration[0].item())
+
+    next_note = np.array([pitch_class, step, duration]).astype(np.float32)
+    sample_song_notes.append(next_note)
+    x_song = [*x_song[1:], next_note]
+
+  notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
+  notes_to_midi(notes, f"./gan_songs/{filename}", INSTRUMENT_NAME)
+
 
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
-    dm = SongsDataModule()
+    dm = SongsDataModule(num_train_songs=10)
     model = SongsGAN()
 
-    logger = TensorBoardLogger("lightning_logs", name="songs model")
-    trainer = Trainer(max_epochs=5, logger=logger, log_every_n_steps=1)
+    logger = TensorBoardLogger("lightning_logs", name="gan model")
+    trainer = Trainer(max_epochs=10, logger=logger, log_every_n_steps=1)
     trainer.fit(model, dm)
 
     generate_sample_song(model.generator, 500, filename='final_song.midi')

@@ -98,23 +98,3 @@ class SongsDataModule(pl.LightningDataModule):
         return DataLoader(self.songs_test, batch_size=self.batch_size, num_workers=self.num_workers)
 
 
-def generate_sample_song(model, song_len=200, seq_len=24, filename='sample_song.midi'):
-  print(f"Generating a song: {filename}")
-  song = get_random_song()
-  song_dataset = SongsDataset([song], seq_len=seq_len)
-
-  state = model.init_hidden(1)  # batch is one
-
-  sample_song_notes = []
-  x_song = song_dataset[0]
-
-  for _ in range(0, song_len):
-    x = torch.tensor([x_song])
-    y, state = model(x, state)
-
-    next_note = y.detach()[0].numpy()
-    sample_song_notes.append(next_note)
-    x_song = [*x_song[1:], next_note]
-
-  notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
-  notes_to_midi(notes, f"./gan_songs/{filename}", INSTRUMENT_NAME)
