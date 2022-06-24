@@ -177,14 +177,13 @@ def generate_sample_song(model, song_len=200, seq_len=25, filename='sample_song.
         x_song = [*x_song[1:], next_note]
 
     notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
-    notes_to_midi(notes, f"./resnet_songs/{filename}", INSTRUMENT_NAME)
+    notes_to_midi(notes, f"./lstm_songs/{filename}", INSTRUMENT_NAME)
 
 
 if __name__ == '__main__':
     dm = SongsDataModule(num_train_songs=10, num_val_songs=5, split_label=True)
     model = SongLTSM(1)
-    logger = TensorBoardLogger("lightning_logs", name="resnet_model",
-                               version="LeakyRELU for step and duration fc, but abs them when generating")
+    logger = TensorBoardLogger("lightning_logs", name="lstm_model")
 
     trainer = pl.Trainer(logger=logger, max_epochs=10, log_every_n_steps=1)
     trainer.fit(model, dm)
