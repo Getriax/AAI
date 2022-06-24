@@ -8,22 +8,10 @@ import torch.nn.functional as F
 from torch import optim
 from pytorch_lightning.loggers import TensorBoardLogger
 
+from common import ZeroLoss
 from constants import INSTRUMENT_NAME
 from midi import get_random_song, notes_to_midi
 from songs_data import SongsDataset, SongsDataModule
-
-class ZeroLoss(nn.Module):
-    def __init__(self, scale=False):
-        self.scale = scale
-        super(ZeroLoss, self).__init__()
-
-    def forward(self, inputs):
-        zeros = inputs[inputs == 0]
-
-        if self.scale:
-            return len(zeros)/len(inputs)
-
-        return len(zeros)
 
 
 class ResBlock(nn.Module):

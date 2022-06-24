@@ -8,30 +8,19 @@ import torch.nn.functional as F
 from torch import optim
 from pytorch_lightning.loggers import TensorBoardLogger
 
+from common import ZeroLoss
 from constants import INSTRUMENT_NAME
 from midi import get_random_song, notes_to_midi
 from songs_data import SongsDataset, SongsDataModule
 
 
-class ZeroLoss(nn.Module):
-    def __init__(self, scale=False):
-        self.scale = scale
-        super(ZeroLoss, self).__init__()
-
-    def forward(self, inputs):
-        zeros = inputs[inputs == 0]
-
-        if self.scale:
-            return len(zeros) / len(inputs)
-
-        return len(zeros)
 
 
 class SongLTSM(pl.LightningModule):
-    def __init__(self, input_size=3, hidden_size=256, num_layers=2, pitches_num=128):
+    def __init__(self, input_size=3, hidden_size=256, num_layers=2, seq_len=24, pitches_num=128):
         super().__init__()
 
-        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
+        self.lstm = nn.LSTM(input_size=seq_len*input_size, hidden_size=hidden_size,
                             num_layers=num_layers, batch_first=True)
 
         self.fcPitch = torch.nn.Linear(hidden_size, pitches_num)
@@ -53,7 +42,7 @@ class SongLTSM(pl.LightningModule):
         self.lstm_state = None
 
     def forward(self, x):
-        x, state = self.lstm(x, self.lstm_state)
+        x, state = self.lstm(x.flatten(1))
         self.lstm_state = state
 
         pitch = self.fcPitch(x)
@@ -182,7 +171,7 @@ def generate_sample_song(model, song_len=200, seq_len=25, filename='sample_song.
 
 if __name__ == '__main__':
     dm = SongsDataModule(num_train_songs=10, num_val_songs=5, split_label=True)
-    model = SongLTSM(1)
+    model = SongLTSM()
     logger = TensorBoardLogger("lightning_logs", name="lstm_model")
 
     trainer = pl.Trainer(logger=logger, max_epochs=10, log_every_n_steps=1)
