@@ -17,10 +17,10 @@ from songs_data import SongsDataset, SongsDataModule
 
 
 class SongLTSM(pl.LightningModule):
-    def __init__(self, input_size=3, hidden_size=256, num_layers=2, seq_len=24, pitches_num=128):
+    def __init__(self, input_size=3, hidden_size=256, num_layers=1, pitches_num=128):
         super().__init__()
 
-        self.lstm = nn.LSTM(input_size=seq_len*input_size, hidden_size=hidden_size,
+        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
                             num_layers=num_layers, batch_first=True)
 
         self.fcPitch = torch.nn.Linear(hidden_size, pitches_num)
@@ -39,11 +39,11 @@ class SongLTSM(pl.LightningModule):
         self.train_macro_f1 = torchmetrics.F1Score(num_classes=pitches_num, average='macro')
         self.val_macro_f1 = torchmetrics.F1Score(num_classes=pitches_num, average='macro')
         self.val_epoch_num = 0
-        self.lstm_state = None
+        self.hidden_size = hidden_size
 
     def forward(self, x):
-        x, state = self.lstm(x.flatten(1))
-        self.lstm_state = state
+        out, (_, x) = self.lstm(x)
+        x = x.view(-1, self.hidden_size)
 
         pitch = self.fcPitch(x)
         step = nn.LeakyReLU()(self.fcStep(x))
