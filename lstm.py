@@ -12,6 +12,7 @@ from constants import INSTRUMENT_NAME
 from midi import get_random_song, notes_to_midi
 from songs_data import SongsDataset, SongsDataModule
 
+
 class ZeroLoss(nn.Module):
     def __init__(self, scale=False):
         self.scale = scale
@@ -21,72 +22,21 @@ class ZeroLoss(nn.Module):
         zeros = inputs[inputs == 0]
 
         if self.scale:
-            return len(zeros)/len(inputs)
+            return len(zeros) / len(inputs)
 
         return len(zeros)
 
 
-class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample):
+class SongLTSM(pl.LightningModule):
+    def __init__(self, input_size=3, hidden_size=256, num_layers=2, pitches_num=128):
         super().__init__()
-        if downsample:
-            self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1)
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-            self.shortcut = nn.Sequential()
 
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
+                            num_layers=num_layers, batch_first=True)
 
-    def forward(self, input):
-        shortcut = self.shortcut(input)
-        input = nn.ReLU()(self.bn1(self.conv1(input)))
-        input = nn.ReLU()(self.bn2(self.conv2(input)))
-        input = input + shortcut
-        return nn.ReLU()(input)
-
-
-class SongResNet(pl.LightningModule):
-    def __init__(self, in_channels, resblock, pitches_num=128):
-        super().__init__()
-        self.layer0 = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU()
-        )
-
-        self.layer1 = nn.Sequential(
-            resblock(64, 64, downsample=False),
-            resblock(64, 64, downsample=False)
-        )
-
-        self.layer2 = nn.Sequential(
-            resblock(64, 128, downsample=True),
-            resblock(128, 128, downsample=False)
-        )
-
-        self.layer3 = nn.Sequential(
-            resblock(128, 256, downsample=True),
-            resblock(256, 256, downsample=False)
-        )
-
-        self.layer4 = nn.Sequential(
-            resblock(256, 512, downsample=True),
-            resblock(512, 512, downsample=False)
-        )
-
-        self.gap = torch.nn.AdaptiveAvgPool2d(1)
-        self.fcPitch = torch.nn.Linear(512, pitches_num)
-        self.fcStep = torch.nn.Linear(512, 1)
-        self.fcDuration = torch.nn.Linear(512, 1)
-
-        self.in_channels = in_channels
+        self.fcPitch = torch.nn.Linear(hidden_size, pitches_num)
+        self.fcStep = torch.nn.Linear(hidden_size, 1)
+        self.fcDuration = torch.nn.Linear(hidden_size, 1)
 
         self.pitch_loss_function = nn.CrossEntropyLoss()
         self.step_loss_function = nn.MSELoss()
@@ -100,19 +50,11 @@ class SongResNet(pl.LightningModule):
         self.train_macro_f1 = torchmetrics.F1Score(num_classes=pitches_num, average='macro')
         self.val_macro_f1 = torchmetrics.F1Score(num_classes=pitches_num, average='macro')
         self.val_epoch_num = 0
-
+        self.lstm_state = None
 
     def forward(self, x):
-        N, H, W = x.size()
-        x = torch.reshape(x, (N, self.in_channels, H, W))
-
-        x = self.layer0(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.gap(x)
-        x = torch.flatten(x, 1)
+        x, state = self.lstm(x, self.lstm_state)
+        self.lstm_state = state
 
         pitch = self.fcPitch(x)
         step = nn.LeakyReLU()(self.fcStep(x))
@@ -142,7 +84,7 @@ class SongResNet(pl.LightningModule):
         duration = torch.flatten(duration)
 
         loss_pitch = self.pitch_loss_function(pitch, label_pitch)
-        loss_step = self.step_loss_function(step , val_step)
+        loss_step = self.step_loss_function(step, val_step)
         loss_step_2 = self.step_loss_function_2(step)
         loss_duration = self.duration_loss_function(duration, val_duration)
         loss_duration_2 = self.duration_loss_function_2(duration)
@@ -184,7 +126,7 @@ class SongResNet(pl.LightningModule):
         duration = torch.flatten(duration)
 
         loss_pitch = self.pitch_loss_function(pitch, label_pitch)
-        loss_step = self.step_loss_function(step , val_step)
+        loss_step = self.step_loss_function(step, val_step)
         loss_step_2 = self.step_loss_function_2(step)
         loss_duration = self.duration_loss_function(duration, val_duration)
         loss_duration_2 = self.duration_loss_function_2(duration)
@@ -215,32 +157,34 @@ class SongResNet(pl.LightningModule):
 
 
 def generate_sample_song(model, song_len=200, seq_len=25, filename='sample_song.midi'):
-  print(f"Generating a song: {filename}")
-  song = get_random_song()
-  song_dataset = SongsDataset([song], seq_len=seq_len, split_label=True)
+    print(f"Generating a song: {filename}")
+    song = get_random_song()
+    song_dataset = SongsDataset([song], seq_len=seq_len, split_label=True)
 
-  sample_song_notes = []
-  x_song, _pred = song_dataset[0]
+    sample_song_notes = []
+    x_song, _pred = song_dataset[0]
 
-  for _ in range(0, song_len):
-    x = torch.tensor([x_song])
-    pitch, step, duration = model(x)
+    for _ in range(0, song_len):
+        x = torch.tensor([x_song])
+        pitch, step, duration = model(x)
 
-    pitch_class = np.argmax(pitch.numpy()[0])
-    step = abs(step.numpy()[0][0])
-    duration = abs(duration.numpy()[0][0])
+        pitch_class = np.argmax(pitch.numpy()[0])
+        step = abs(step.numpy()[0][0])
+        duration = abs(duration.numpy()[0][0])
 
-    next_note = np.array([pitch_class, step, duration]).astype(np.float32)
-    sample_song_notes.append(next_note)
-    x_song = [*x_song[1:], next_note]
+        next_note = np.array([pitch_class, step, duration]).astype(np.float32)
+        sample_song_notes.append(next_note)
+        x_song = [*x_song[1:], next_note]
 
-  notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
-  notes_to_midi(notes, f"./resnet_songs/{filename}", INSTRUMENT_NAME)
+    notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
+    notes_to_midi(notes, f"./resnet_songs/{filename}", INSTRUMENT_NAME)
+
 
 if __name__ == '__main__':
     dm = SongsDataModule(num_train_songs=10, num_val_songs=5, split_label=True)
-    model = SongResNet(1, ResBlock)
-    logger = TensorBoardLogger("lightning_logs", name="resnet_model", version="LeakyRELU for step and duration fc, but abs them when generating")
+    model = SongLTSM(1)
+    logger = TensorBoardLogger("lightning_logs", name="resnet_model",
+                               version="LeakyRELU for step and duration fc, but abs them when generating")
 
-    trainer = pl.Trainer(logger=logger, max_epochs = 10, log_every_n_steps=1)
+    trainer = pl.Trainer(logger=logger, max_epochs=10, log_every_n_steps=1)
     trainer.fit(model, dm)

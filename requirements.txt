@@ -3,3 +3,4 @@ numpy
 pretty_midi
 pytorch-lightning
 torch
+tensorflow
