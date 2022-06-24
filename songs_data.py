@@ -12,12 +12,13 @@ from midi import download_maestro_song_notes, get_maestro_song_notes, get_random
 NUM_WORKERS = int(os.cpu_count() / 2)
 
 class SongsDataset(Dataset):
-    def __init__(self, songs, seq_len):
+    def __init__(self, songs, seq_len, split_label=False):
         self.seq_len = seq_len
         self.songs = songs
         self.song_idx = 0
         self.songs_switch_idx = 0
         self.note_fields = ["pitch", "step", "duration"]
+        self.split_label =split_label
 
     def __len__(self):
         total = sum(map(len, self.songs)) - ((self.seq_len + 1) * len(self.songs))
@@ -36,8 +37,12 @@ class SongsDataset(Dataset):
             notes = self.songs[self.song_idx]
 
         x = notes[notes_start_idx:(notes_start_idx + self.seq_len)]
+        x = x[self.note_fields].astype(np.float32).values
 
-        return x[self.note_fields].astype(np.float32).values
+        if (self.split_label):
+            return x[0:self.seq_len-1], x[self.seq_len-1]
+
+        return x
 
 
 class SongsDataModule(pl.LightningDataModule):
@@ -49,6 +54,7 @@ class SongsDataModule(pl.LightningDataModule):
             num_train_songs: int = 2,
             num_val_songs: int = 1,
             num_test_songs: int = 1,
+            split_label=False
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -57,6 +63,7 @@ class SongsDataModule(pl.LightningDataModule):
         self.num_val_songs = num_val_songs
         self.num_test_songs = num_test_songs
         self.seq_len = seq_len
+        self.split_label = split_label
 
     def prepare_data(self):
         # download
@@ -68,14 +75,14 @@ class SongsDataModule(pl.LightningDataModule):
             songs = get_maestro_song_notes(self.num_train_songs + self.num_val_songs)
             self.songs_train, self.songs_val = random_split(songs, [self.num_train_songs, self.num_val_songs])
 
-            self.songs_train = SongsDataset(self.songs_train, self.seq_len)
-            self.songs_val = SongsDataset(self.songs_val, self.seq_len)
+            self.songs_train = SongsDataset(self.songs_train, self.seq_len, split_label=self.split_label)
+            self.songs_val = SongsDataset(self.songs_val, self.seq_len, split_label=self.split_label)
 
         # Assign test dataset for use in dataloader(s)
         if stage == "test" or stage is None:
             self.songs_test = get_maestro_song_notes(self.num_test_songs,
                                                      skip=self.num_train_songs + self.num_val_songs)
-            self.songs_test = SongsDataset(self.songs_test, self.seq_len)
+            self.songs_test = SongsDataset(self.songs_test, self.seq_len, split_label=self.split_label)
 
     def train_dataloader(self):
         return DataLoader(

@@ -10,8 +10,6 @@ from pytorch_lightning.loggers import TensorBoardLogger
 
 from constants import BATCH_SIZE, INSTRUMENT_NAME
 
-
-
 from songs_data import SongsDataModule, generate_sample_song
 
 train_songs_len = 200
