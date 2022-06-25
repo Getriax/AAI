@@ -242,11 +242,11 @@ class SongsGAN(pl.LightningModule):
         return [opt_g, opt_d], []
 
     def validation_epoch_end(self, _):
-        generate_sample_song(self.generator, 'gan_songs', filename=f"song_{self.train_epoch_num}.midi", has_state=True, seq_len=self.seq_len)
+        generate_sample_song(self.generator, 'gan_songs2', filename=f"song_{self.train_epoch_num}.midi", has_state=True, seq_len=self.seq_len)
 
         self.train_epoch_num += 1
 
-    def validation_step_end(self, batch, batch_idx, optimizer_idx):
+    def validation_step(self, batch, batch_idx, optimizer_idx):
         songs = batch
 
         self.generator_state = self.generator.init_hidden(self.batch_size)
@@ -319,12 +319,12 @@ class SongsGAN(pl.LightningModule):
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
-    dm = SongsDataModule(num_train_songs=10)
+    dm = SongsDataModule(num_train_songs=2)
     model = SongsGAN()
 
     logger = TensorBoardLogger("lightning_logs", name="gan model")
     trainer = Trainer(max_epochs=10, logger=logger, log_every_n_steps=1)
     trainer.fit(model, dm)
 
-    generate_sample_song(model.generator, 'gan_songs', 500, filename='final_song.midi', has_state=True, seq_len=24)
+    generate_sample_song(model.generator, 'gan_songs2', 500, filename='final_song.midi', has_state=True, seq_len=24)
 
