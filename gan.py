@@ -24,6 +24,7 @@ from constants import BATCH_SIZE
 
 from songs_data import SongsDataModule
 
+
 class NextNoteGenerator(nn.Module):
     def __init__(self, seq_len=24, num_feats=3, num_pitches=128, hidden_units=256, drop_prob=0.4, ):
         super().__init__()
@@ -75,7 +76,7 @@ class NextNoteGenerator(nn.Module):
 
 
 class NoteSequenceDiscriminator(nn.Module):
-    def __init__(self, num_feats=3, hidden_units=256, drop_prob=0.2, num_layers = 2):
+    def __init__(self, num_feats=3, hidden_units=256, drop_prob=0.2, num_layers=2):
         super().__init__()
         self.hidden_dim = hidden_units
         self.num_layers = num_layers
@@ -115,15 +116,15 @@ class NoteSequenceDiscriminator(nn.Module):
 
 class SongsGAN(pl.LightningModule):
     def __init__(
-        self,
-        seq_len = 24,
-        num_feats = 3,
-        pitches_num=128,
-        lr: float = 0.0002,
-        b1: float = 0.5,
-        b2: float = 0.999,
-        batch_size: int = BATCH_SIZE,
-        **kwargs
+            self,
+            seq_len=24,
+            num_feats=3,
+            pitches_num=128,
+            lr: float = 0.0002,
+            b1: float = 0.5,
+            b2: float = 0.999,
+            batch_size: int = BATCH_SIZE,
+            **kwargs
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -219,7 +220,7 @@ class SongsGAN(pl.LightningModule):
 
             g_songs = self.append_generated_notes_to_real(pitch, step, duration, x)
 
-            d, d_state =  self.discriminator(g_songs, d_state)
+            d, d_state = self.discriminator(g_songs, d_state)
             self.discriminator_state = d_state
 
             fake_loss = self.adversarial_loss(d, fake)
@@ -242,84 +243,67 @@ class SongsGAN(pl.LightningModule):
         return [opt_g, opt_d], []
 
     def validation_epoch_end(self, _):
-        generate_sample_song(self.generator, 'gan_songs2', filename=f"song_{self.train_epoch_num}.midi", has_state=True, seq_len=self.seq_len)
+        generate_sample_song(self.generator, 'gan_songs2', filename=f"song_{self.train_epoch_num}.midi", has_state=True,
+                             seq_len=self.seq_len)
 
         self.train_epoch_num += 1
 
-    def validation_step(self, batch, batch_idx, optimizer_idx):
+    def validation_step(self, batch, batch_idx):
         songs = batch
 
         self.generator_state = self.generator.init_hidden(self.batch_size)
         self.discriminator_state = self.discriminator.init_hidden(self.batch_size)
 
-        # train generator
-        if optimizer_idx == 0:
-            x = self.prepare_notes_batch_for_generator(songs)
+        x = self.prepare_notes_batch_for_generator(songs)
 
-            # generate next song notes
-            pitch, step, duration, gen_state = self(x, self.generator_state)
-            self.generator_state = gen_state
+        pitch, step, duration, gen_state = self(x, self.generator_state)
+        self.generator_state = gen_state
 
-            created = self.append_generated_notes_to_real(pitch.clone(), step.clone(), duration.clone(), x.clone())
+        created = self.append_generated_notes_to_real(pitch.clone(), step.clone(), duration.clone(), x.clone())
 
-            # ground truth result (ie: all fake)
-            valid = torch.ones(created.size(0))
-            valid = valid.type_as(songs)
+        valid = torch.ones(created.size(0))
+        valid = valid.type_as(songs)
 
-            disc_valid, di_state = self.discriminator(created, self.discriminator_state)
-            self.discriminator_state = di_state
+        disc_valid, di_state = self.discriminator(created, self.discriminator_state)
+        self.discriminator_state = di_state
 
-            # adversarial loss is binary cross-entropy
-            g_loss = self.adversarial_loss(disc_valid, valid)
-            self.log('val_generator_loss', g_loss)
-            self.log('duration_max_val', torch.max(duration), on_step=True, on_epoch=True)
-            self.log('duration_min_val', torch.min(duration), on_step=True, on_epoch=True)
-            self.log('step_max_val', torch.max(step), on_step=True, on_epoch=True)
-            self.log('step_min_val', torch.min(step), on_step=True, on_epoch=True)
+        g_loss = self.adversarial_loss(disc_valid, valid)
+        self.log('val_generator_loss', g_loss)
+        self.log('duration_max_val', torch.max(duration), on_step=True, on_epoch=True)
+        self.log('duration_min_val', torch.min(duration), on_step=True, on_epoch=True)
+        self.log('step_max_val', torch.max(step), on_step=True, on_epoch=True)
+        self.log('step_min_val', torch.min(step), on_step=True, on_epoch=True)
 
-            tqdm_dict = {"g_loss": g_loss}
-            output = OrderedDict({"loss": g_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
-            return output
+        valid = torch.ones(songs.size(0))
+        valid = valid.type_as(songs)
 
-        # train discriminator
-        if optimizer_idx == 1:
-            # Measure discriminator's ability to classify real from generated samples
+        rel, d_state = self.discriminator(songs, self.discriminator_state)
+        real_loss = self.adversarial_loss(rel, valid)
 
-            # how well can it label as real?
-            valid = torch.ones(songs.size(0))
-            valid = valid.type_as(songs)
+        fake = torch.zeros(songs.size(0))
+        fake = fake.type_as(songs)
 
-            rel, d_state = self.discriminator(songs, self.discriminator_state)
-            real_loss = self.adversarial_loss(rel, valid)
+        x = self.prepare_notes_batch_for_generator(songs)
+        pitch, step, duration, g_state = self(x, self.generator_state)
+        self.generator_state = g_state
 
-            # how well can it label as fake?
-            fake = torch.zeros(songs.size(0))
-            fake = fake.type_as(songs)
+        g_songs = self.append_generated_notes_to_real(pitch, step, duration, x)
 
-            x = self.prepare_notes_batch_for_generator(songs)
-            pitch, step, duration, g_state = self(x, self.generator_state)
-            self.generator_state = g_state
+        d, d_state = self.discriminator(g_songs, d_state)
+        self.discriminator_state = d_state
 
-            g_songs = self.append_generated_notes_to_real(pitch, step, duration, x)
+        fake_loss = self.adversarial_loss(d, fake)
 
-            d, d_state = self.discriminator(g_songs, d_state)
-            self.discriminator_state = d_state
+        d_loss = (real_loss + fake_loss) / 2
 
-            fake_loss = self.adversarial_loss(d, fake)
+        self.log('val_discriminator_loss', d_loss)
+        return d_loss
 
-            # discriminator loss is the average of these
-            d_loss = (real_loss + fake_loss) / 2
-
-            self.log('val_discriminator_loss', d_loss)
-
-            tqdm_dict = {"d_loss": d_loss}
-            output = OrderedDict({"loss": d_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
-            return output
 
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
-    dm = SongsDataModule(num_train_songs=2)
+    dm = SongsDataModule(num_train_songs=5)
     model = SongsGAN()
 
     logger = TensorBoardLogger("lightning_logs", name="gan model")
@@ -327,4 +311,3 @@ if __name__ == '__main__':
     trainer.fit(model, dm)
 
     generate_sample_song(model.generator, 'gan_songs2', 500, filename='final_song.midi', has_state=True, seq_len=24)
-
