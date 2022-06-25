@@ -53,7 +53,7 @@ class SongLTSM(pl.LightningModule):
         return optimizer
 
     def validation_epoch_end(self, _):
-        generate_sample_song(self, filename=f"song_{self.val_epoch_num}.midi", seq_len=25)
+        generate_sample_song(self, 'lstm_songs', filename=f"song_{self.val_epoch_num}.midi", seq_len=25)
 
         self.val_epoch_num += 1
 

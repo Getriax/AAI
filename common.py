@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -26,7 +27,7 @@ class ZeroLoss(nn.Module):
         return len(zeros)
 
 
-def generate_sample_song(model, song_len=200, seq_len=24, filename='sample_song.midi', has_state=False):
+def generate_sample_song(model, folder_name, song_len=200, seq_len=24, filename='sample_song.midi', has_state=False):
     '''
     Generuje przykładową piosenkę, z wprowadzona liczba nut, wykorzystujac przekazany model.
     :param model: model generujacy
@@ -62,4 +63,7 @@ def generate_sample_song(model, song_len=200, seq_len=24, filename='sample_song.
         x_song = [*x_song[1:], next_note]
 
     notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
-    notes_to_midi(notes, f"./gan_songs/{filename}", INSTRUMENT_NAME)
+
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+    notes_to_midi(notes, f"./{folder_name}/{filename}", INSTRUMENT_NAME)

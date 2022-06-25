@@ -35,5 +35,5 @@ $ python lstm.py
 
 ### ResNet
 ```bash
-$ python conv.py
+$ python resnet.py
 ```
