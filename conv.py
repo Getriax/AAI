@@ -1,5 +1,7 @@
-import numpy as np
-import pandas as pd
+'''
+Model ResNet do przewidywania kolejnej nuty z sekwencji X nut
+'''
+
 import torch
 import pytorch_lightning as pl
 from torch import nn
@@ -8,10 +10,8 @@ import torch.nn.functional as F
 from torch import optim
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from common import ZeroLoss
-from constants import INSTRUMENT_NAME
-from midi import get_random_song, notes_to_midi
-from songs_data import SongsDataset, SongsDataModule
+from common import ZeroLoss, generate_sample_song
+from songs_data import SongsDataModule
 
 
 class ResBlock(nn.Module):
@@ -91,6 +91,10 @@ class SongResNet(pl.LightningModule):
 
 
     def forward(self, x):
+        '''
+        :param x: (N, seq_len, 3)
+        :return:
+        '''
         N, H, W = x.size()
         x = torch.reshape(x, (N, self.in_channels, H, W))
 
@@ -113,7 +117,7 @@ class SongResNet(pl.LightningModule):
         return optimizer
 
     def validation_epoch_end(self, _):
-        generate_sample_song(self, filename=f"song_{self.val_epoch_num}.midi")
+        generate_sample_song(self, filename=f"song_{self.val_epoch_num}.midi", seq_len=25)
 
         self.val_epoch_num += 1
 
@@ -201,29 +205,6 @@ class SongResNet(pl.LightningModule):
 
         return loss
 
-
-def generate_sample_song(model, song_len=200, seq_len=25, filename='sample_song.midi'):
-  print(f"Generating a song: {filename}")
-  song = get_random_song()
-  song_dataset = SongsDataset([song], seq_len=seq_len, split_label=True)
-
-  sample_song_notes = []
-  x_song, _pred = song_dataset[0]
-
-  for _ in range(0, song_len):
-    x = torch.tensor([x_song])
-    pitch, step, duration = model(x)
-
-    pitch_class = np.argmax(pitch.numpy()[0])
-    step = abs(step.numpy()[0][0])
-    duration = abs(duration.numpy()[0][0])
-
-    next_note = np.array([pitch_class, step, duration]).astype(np.float32)
-    sample_song_notes.append(next_note)
-    x_song = [*x_song[1:], next_note]
-
-  notes = pd.DataFrame(sample_song_notes, columns=['pitch', 'step', 'duration'])
-  notes_to_midi(notes, f"./resnet_songs/{filename}", INSTRUMENT_NAME)
 
 if __name__ == '__main__':
     dm = SongsDataModule(num_train_songs=10, num_val_songs=5, split_label=True)

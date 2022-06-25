@@ -1,13 +1,14 @@
+'''
+Plik ten definiuje dataset sparsowanych plików midi, który używany jest przy trenowaniu modeli.
+'''
+
 import os
 import numpy as np
-import pandas as pd
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset, random_split
 import pytorch_lightning as pl
-import torch
-
-from constants import BATCH_SIZE, INSTRUMENT_NAME
-from midi import download_maestro_song_notes, get_maestro_song_notes, get_random_song, notes_to_midi
+from constants import BATCH_SIZE
+from midi import download_maestro_song_notes, get_maestro_song_notes
 
 NUM_WORKERS = int(os.cpu_count() / 2)
 
@@ -21,10 +22,18 @@ class SongsDataset(Dataset):
         self.split_label =split_label
 
     def __len__(self):
+        '''
+        :return: liczba sekwencji seq_len ze wszystkich piosenek
+        '''
         total = sum(map(len, self.songs)) - ((self.seq_len + 1) * len(self.songs))
         return total - (total % self.seq_len)
 
     def __getitem__(self, idx):
+        '''
+        Metoda zwraca następną sekwencję nut, w zależnosci od parametru split_label, ostatnia nuta może być zwrócona jako drugi parametr
+        :param idx:
+        :return: (seq_len, note_fields_len) lub (seq_len-1, note_fields_len) (1, note_fields_len)
+        '''
         notes = self.songs[self.song_idx]
         notes_start_idx = idx - self.songs_switch_idx
 
@@ -70,7 +79,10 @@ class SongsDataModule(pl.LightningDataModule):
         download_maestro_song_notes()
 
     def setup(self, stage=None):
-        # Assign train/val datasets for use in dataloaders
+        '''
+        Generuje treningowy, walidacyjny i testowy dataset dzieląc zbiory według parametrów
+        :param stage: fit | test
+        '''
         if stage == "fit" or stage is None:
             songs = get_maestro_song_notes(self.num_train_songs + self.num_val_songs)
             self.songs_train, self.songs_val = random_split(songs, [self.num_train_songs, self.num_val_songs])
@@ -78,7 +90,6 @@ class SongsDataModule(pl.LightningDataModule):
             self.songs_train = SongsDataset(self.songs_train, self.seq_len, split_label=self.split_label)
             self.songs_val = SongsDataset(self.songs_val, self.seq_len, split_label=self.split_label)
 
-        # Assign test dataset for use in dataloader(s)
         if stage == "test" or stage is None:
             self.songs_test = get_maestro_song_notes(self.num_test_songs,
                                                      skip=self.num_train_songs + self.num_val_songs)
