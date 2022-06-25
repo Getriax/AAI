@@ -24,11 +24,6 @@ from constants import BATCH_SIZE
 
 from songs_data import SongsDataModule
 
-train_songs_len = 200
-valid_songs_len = 10
-
-instrument_note_keys = ['pitch', 'step', 'duration']
-
 class NextNoteGenerator(nn.Module):
     def __init__(self, seq_len=24, num_feats=3, num_pitches=128, hidden_units=256, drop_prob=0.4, ):
         super().__init__()
